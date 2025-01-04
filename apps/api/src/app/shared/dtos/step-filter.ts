@@ -115,12 +115,13 @@ type FilterParts =
 
 export class StepFilter {
   @ApiProperty()
-  isNegated: boolean;
+  isNegated?: boolean;
 
   @ApiProperty({
     enum: ['BOOLEAN', 'TEXT', 'DATE', 'NUMBER', 'STATEMENT', 'LIST', 'MULTI_LIST', 'GROUP'],
+    enumName: 'BuilderFieldType',
   })
-  type: BuilderFieldType;
+  type?: BuilderFieldType;
 
   @ApiProperty({
     enum: ['AND', 'OR'],

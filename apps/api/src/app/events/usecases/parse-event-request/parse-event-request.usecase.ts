@@ -1,28 +1,56 @@
-import { Injectable, UnprocessableEntityException, Logger } from '@nestjs/common';
-import * as Sentry from '@sentry/node';
-import * as hat from 'hat';
+import { Injectable, Logger, UnprocessableEntityException } from '@nestjs/common';
+import { addBreadcrumb } from '@sentry/node';
+import { randomBytes } from 'crypto';
 import { merge } from 'lodash';
 import { v4 as uuidv4 } from 'uuid';
+import { ModuleRef } from '@nestjs/core';
+
 import {
+  AnalyticsService,
+  buildHasNotificationKey,
   buildNotificationTemplateIdentifierKey,
   CachedEntity,
+  ExecuteBridgeRequest,
+  ExecuteBridgeRequestCommand,
+  ExecuteBridgeRequestDto,
+  GetFeatureFlag,
+  GetFeatureFlagCommand,
   Instrument,
   InstrumentUsecase,
+  InvalidateCacheService,
+  IWorkflowDataDto,
   StorageHelperService,
   WorkflowQueueService,
 } from '@novu/application-generic';
-import { NotificationTemplateRepository, NotificationTemplateEntity, TenantRepository } from '@novu/dal';
 import {
-  ISubscribersDefine,
-  ITenantDefine,
+  FeatureFlagsKeysEnum,
+  INVITE_TEAM_MEMBER_NUDGE_PAYLOAD_KEY,
   ReservedVariablesMap,
   TriggerContextTypeEnum,
   TriggerEventStatusEnum,
-  TriggerTenantContext,
+  WorkflowOriginEnum,
 } from '@novu/shared';
+import {
+  EnvironmentEntity,
+  EnvironmentRepository,
+  MemberRepository,
+  NotificationRepository,
+  NotificationTemplateEntity,
+  NotificationTemplateRepository,
+  TenantEntity,
+  TenantRepository,
+  UserRepository,
+  WorkflowOverrideEntity,
+  WorkflowOverrideRepository,
+} from '@novu/dal';
+import { DiscoverWorkflowOutput, GetActionEnum } from '@novu/framework/internal';
 
-import { ParseEventRequestCommand } from './parse-event-request.command';
-
+import { Novu } from '@novu/api';
+import {
+  ParseEventRequestBroadcastCommand,
+  ParseEventRequestCommand,
+  ParseEventRequestMulticastCommand,
+} from './parse-event-request.command';
 import { ApiException } from '../../../shared/exceptions/api.exception';
 import { VerifyPayload, VerifyPayloadCommand } from '../verify-payload';
 
@@ -32,15 +60,40 @@ const LOG_CONTEXT = 'ParseEventRequest';
 export class ParseEventRequest {
   constructor(
     private notificationTemplateRepository: NotificationTemplateRepository,
+    private notificationRepository: NotificationRepository,
+    private environmentRepository: EnvironmentRepository,
+    private userRepository: UserRepository,
+    private memberRepository: MemberRepository,
     private verifyPayload: VerifyPayload,
     private storageHelperService: StorageHelperService,
     private workflowQueueService: WorkflowQueueService,
-    private tenantRepository: TenantRepository
+    private tenantRepository: TenantRepository,
+    private workflowOverrideRepository: WorkflowOverrideRepository,
+    private analyticsService: AnalyticsService,
+    private getFeatureFlag: GetFeatureFlag,
+    private invalidateCacheService: InvalidateCacheService,
+    private executeBridgeRequest: ExecuteBridgeRequest,
+    protected moduleRef: ModuleRef
   ) {}
 
   @InstrumentUsecase()
-  async execute(command: ParseEventRequestCommand) {
+  public async execute(command: ParseEventRequestCommand) {
     const transactionId = command.transactionId || uuidv4();
+
+    const { environment, statelessWorkflowAllowed } = await this.isStatelessWorkflowAllowed(
+      command.environmentId,
+      command.bridgeUrl
+    );
+
+    if (environment && statelessWorkflowAllowed) {
+      const discoveredWorkflow = await this.queryDiscoverWorkflow(command);
+
+      if (!discoveredWorkflow) {
+        throw new UnprocessableEntityException('workflow_not_found');
+      }
+
+      return await this.dispatchEvent(command, transactionId, discoveredWorkflow);
+    }
 
     const template = await this.getNotificationTemplateByTriggerIdentifier({
       environmentId: command.environmentId,
@@ -54,7 +107,38 @@ export class ParseEventRequest {
     const reservedVariablesTypes = this.getReservedVariablesTypes(template);
     this.validateTriggerContext(command, reservedVariablesTypes);
 
-    if (!template.active) {
+    let tenant: TenantEntity | null = null;
+    if (command.tenant) {
+      tenant = await this.tenantRepository.findOne({
+        _environmentId: command.environmentId,
+        identifier: typeof command.tenant === 'string' ? command.tenant : command.tenant.identifier,
+      });
+
+      if (!tenant) {
+        return {
+          acknowledged: true,
+          status: TriggerEventStatusEnum.TENANT_MISSING,
+        };
+      }
+    }
+
+    let workflowOverride: WorkflowOverrideEntity | null = null;
+    if (tenant) {
+      workflowOverride = await this.workflowOverrideRepository.findOne({
+        _environmentId: command.environmentId,
+        _organizationId: command.organizationId,
+        _workflowId: template._id,
+        _tenantId: tenant._id,
+      });
+    }
+
+    const inactiveWorkflow = !workflowOverride && !template.active;
+    const inactiveWorkflowOverride = workflowOverride && !workflowOverride.active;
+
+    if (inactiveWorkflowOverride || inactiveWorkflow) {
+      const message = workflowOverride ? 'Workflow is not active by workflow override' : 'Workflow is not active';
+      Logger.log(message, LOG_CONTEXT);
+
       return {
         acknowledged: true,
         status: TriggerEventStatusEnum.NOT_ACTIVE,
@@ -75,21 +159,7 @@ export class ParseEventRequest {
       };
     }
 
-    if (command.tenant) {
-      try {
-        await this.validateTenant({
-          identifier: typeof command.tenant === 'string' ? command.tenant : command.tenant.identifier,
-          _environmentId: command.environmentId,
-        });
-      } catch (e) {
-        return {
-          acknowledged: true,
-          status: TriggerEventStatusEnum.TENANT_MISSING,
-        };
-      }
-    }
-
-    Sentry.addBreadcrumb({
+    addBreadcrumb({
       message: 'Sending trigger',
       data: {
         triggerIdentifier: command.identifier,
@@ -100,6 +170,7 @@ export class ParseEventRequest {
     if (command.payload && Array.isArray(command.payload.attachments)) {
       this.modifyAttachments(command);
       await this.storageHelperService.uploadAttachments(command.payload.attachments);
+      // eslint-disable-next-line no-param-reassign
       command.payload.attachments = command.payload.attachments.map(({ file, ...attachment }) => attachment);
     }
 
@@ -109,22 +180,65 @@ export class ParseEventRequest {
         template,
       })
     );
-
+    // eslint-disable-next-line no-param-reassign
     command.payload = merge({}, defaultPayload, command.payload);
 
-    const jobData = {
+    return await this.dispatchEvent(command, transactionId);
+  }
+
+  private async queryDiscoverWorkflow(command: ParseEventRequestCommand): Promise<DiscoverWorkflowOutput | null> {
+    if (!command.bridgeUrl) {
+      return null;
+    }
+
+    const discover = (await this.executeBridgeRequest.execute(
+      ExecuteBridgeRequestCommand.create({
+        statelessBridgeUrl: command.bridgeUrl,
+        environmentId: command.environmentId,
+        action: GetActionEnum.DISCOVER,
+        workflowOrigin: WorkflowOriginEnum.EXTERNAL,
+      })
+    )) as ExecuteBridgeRequestDto<GetActionEnum.DISCOVER>;
+
+    return discover?.workflows?.find((findWorkflow) => findWorkflow.workflowId === command.identifier) || null;
+  }
+
+  private async dispatchEvent(
+    command: ParseEventRequestMulticastCommand | ParseEventRequestBroadcastCommand,
+    transactionId,
+    discoveredWorkflow?: DiscoverWorkflowOutput | null
+  ) {
+    const jobData: IWorkflowDataDto = {
       ...command,
-      to: command.to,
       actor: command.actor,
       transactionId,
+      bridgeWorkflow: discoveredWorkflow ?? undefined,
     };
-    await this.workflowQueueService.add(transactionId, jobData, command.organizationId);
+
+    await this.workflowQueueService.add({ name: transactionId, data: jobData, groupId: command.organizationId });
 
     return {
       acknowledged: true,
       status: TriggerEventStatusEnum.PROCESSED,
       transactionId,
     };
+  }
+
+  private async isStatelessWorkflowAllowed(
+    environmentId: string,
+    bridgeUrl: string | undefined
+  ): Promise<{ environment: EnvironmentEntity | null; statelessWorkflowAllowed: boolean }> {
+    if (!bridgeUrl) {
+      return { environment: null, statelessWorkflowAllowed: false };
+    }
+
+    const environment = await this.environmentRepository.findOne({ _id: environmentId });
+
+    if (!environment) {
+      throw new UnprocessableEntityException('Environment not found');
+    }
+
+    return { environment, statelessWorkflowAllowed: true };
   }
 
   @Instrument()
@@ -143,16 +257,6 @@ export class ParseEventRequest {
       command.environmentId,
       command.triggerIdentifier
     );
-  }
-
-  private async validateTenant({ identifier, _environmentId }: { identifier: string; _environmentId: string }) {
-    const found = await this.tenantRepository.findOne({
-      _environmentId: _environmentId,
-      identifier: identifier,
-    });
-    if (!found) {
-      throw new ApiException(`Tenant with identifier ${identifier} could not be found`);
-    }
   }
 
   @Instrument()
@@ -183,25 +287,22 @@ export class ParseEventRequest {
     }
   }
 
-  private modifyAttachments(command: ParseEventRequestCommand) {
-    command.payload.attachments = command.payload.attachments.map((attachment) => ({
-      ...attachment,
-      name: attachment.name,
-      file: Buffer.from(attachment.file, 'base64'),
-      storagePath: `${command.organizationId}/${command.environmentId}/${hat()}/${attachment.name}`,
-    }));
+  private modifyAttachments(command: ParseEventRequestCommand): void {
+    // eslint-disable-next-line no-param-reassign
+    command.payload.attachments = command.payload.attachments.map((attachment) => {
+      const randomId = randomBytes(16).toString('hex');
+
+      return {
+        ...attachment,
+        name: attachment.name,
+        file: Buffer.from(attachment.file, 'base64'),
+        storagePath: `${command.organizationId}/${command.environmentId}/${randomId}/${attachment.name}`,
+      };
+    });
   }
 
-  public mapTenant(tenant: TriggerTenantContext): ITenantDefine {
-    if (typeof tenant === 'string') {
-      return { identifier: tenant };
-    }
-
-    return tenant;
-  }
-
-  public getReservedVariablesTypes(template: NotificationTemplateEntity): TriggerContextTypeEnum[] {
-    const reservedVariables = template.triggers[0].reservedVariables;
+  private getReservedVariablesTypes(template: NotificationTemplateEntity): TriggerContextTypeEnum[] {
+    const { reservedVariables } = template.triggers[0];
 
     return reservedVariables?.map((reservedVariable) => reservedVariable.type) || [];
   }

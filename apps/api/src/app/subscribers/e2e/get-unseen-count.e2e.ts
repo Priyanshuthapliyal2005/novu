@@ -28,17 +28,17 @@ describe('Get Unseen Count - /:subscriberId/notifications/unseen (GET)', functio
     expect(seenCount).to.equal(1);
 
     try {
-      await getUnSeenCount(subscriberId + '111', session.apiKey, { seen: false });
+      await getUnSeenCount(`${subscriberId}111`, session.apiKey, { seen: false });
     } catch (err) {
       expect(err.response.status).to.equals(400);
-      expect(err.response.data.message).to.contain(`Subscriber ${subscriberId + '111'} is not exist in environment`);
+      expect(err.response.data.message).to.contain(`Subscriber ${`${subscriberId}111`} is not exist in environment`);
     }
   });
 });
 
 async function getUnSeenCount(subscriberId: string, apiKey: string, query = {}) {
   const response = await axios.get(
-    `http://localhost:${process.env.PORT}/v1/subscribers/${subscriberId}/notifications/unseen`,
+    `http://127.0.0.1:${process.env.PORT}/v1/subscribers/${subscriberId}/notifications/unseen`,
     {
       params: {
         ...query,

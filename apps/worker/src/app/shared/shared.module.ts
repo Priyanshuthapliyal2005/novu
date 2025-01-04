@@ -1,65 +1,60 @@
 import { Module } from '@nestjs/common';
 import {
-  DalService,
-  UserRepository,
-  OrganizationRepository,
-  EnvironmentRepository,
-  ExecutionDetailsRepository,
-  NotificationTemplateRepository,
-  SubscriberRepository,
-  NotificationRepository,
-  MessageRepository,
-  NotificationGroupRepository,
-  MessageTemplateRepository,
-  MemberRepository,
-  LayoutRepository,
-  LogRepository,
-  IntegrationRepository,
-  ChangeRepository,
-  JobRepository,
-  FeedRepository,
-  SubscriberPreferenceRepository,
-  TopicRepository,
-  TopicSubscribersRepository,
-  TenantRepository,
-} from '@novu/dal';
-import {
   analyticsService,
   BulkCreateExecutionDetails,
   cacheService,
-  CalculateDelayService,
+  ComputeJobWaitDurationService,
   CreateExecutionDetails,
   createNestLoggingModuleOptions,
   CreateNotificationJobs,
   CreateSubscriber,
+  CreateTenant,
   DalServiceHealthIndicator,
   DigestFilterSteps,
-  DigestFilterStepsBackoff,
-  DigestFilterStepsRegular,
-  DigestFilterStepsTimed,
   distributedLockService,
   EventsDistributedLockService,
+  ExecuteBridgeRequest,
   featureFlagsService,
-  getIsMultiProviderConfigurationEnabled,
+  GetDecryptedSecretKey,
+  GetTenant,
   InvalidateCacheService,
   LoggerModule,
+  MetricsModule,
   ProcessSubscriber,
+  ProcessTenant,
+  QueuesModule,
   StorageHelperService,
   storageService,
   UpdateSubscriber,
+  UpdateSubscriberChannel,
   UpdateTenant,
-  GetTenant,
-  CreateTenant,
-  ProcessTenant,
-  getUseMergedDigestId,
 } from '@novu/application-generic';
+import {
+  ControlValuesRepository,
+  DalService,
+  EnvironmentRepository,
+  ExecutionDetailsRepository,
+  IntegrationRepository,
+  JobRepository,
+  LayoutRepository,
+  MessageRepository,
+  MessageTemplateRepository,
+  NotificationGroupRepository,
+  NotificationRepository,
+  NotificationTemplateRepository,
+  SubscriberRepository,
+  TenantRepository,
+  TopicRepository,
+  TopicSubscribersRepository,
+  WorkflowOverrideRepository,
+} from '@novu/dal';
 
-import * as packageJson from '../../../package.json';
-import { CreateLog } from './logs';
+import { JobTopicNameEnum } from '@novu/shared';
+import packageJson from '../../../package.json';
+import { UNIQUE_WORKER_DEPENDENCIES } from '../../config/worker-init.config';
+import { ActiveJobsMetricService } from '../workflow/services';
 
 const DAL_MODELS = [
-  UserRepository,
-  OrganizationRepository,
   EnvironmentRepository,
   ExecutionDetailsRepository,
   NotificationTemplateRepository,
@@ -68,17 +63,14 @@ const DAL_MODELS = [
   MessageRepository,
   MessageTemplateRepository,
   NotificationGroupRepository,
-  MemberRepository,
   LayoutRepository,
-  LogRepository,
   IntegrationRepository,
-  ChangeRepository,
   JobRepository,
-  FeedRepository,
-  SubscriberPreferenceRepository,
   TopicRepository,
   TopicSubscribersRepository,
   TenantRepository,
+  WorkflowOverrideRepository,
+  ControlValuesRepository,
 ];
 
 const dalService = {
@@ -96,36 +88,40 @@ const PROVIDERS = [
   analyticsService,
   BulkCreateExecutionDetails,
   cacheService,
-  CalculateDelayService,
+  ComputeJobWaitDurationService,
   CreateExecutionDetails,
-  CreateLog,
   CreateNotificationJobs,
   CreateSubscriber,
   dalService,
   DalServiceHealthIndicator,
   DigestFilterSteps,
-  DigestFilterStepsBackoff,
-  DigestFilterStepsRegular,
-  DigestFilterStepsTimed,
   distributedLockService,
   EventsDistributedLockService,
   featureFlagsService,
-  getUseMergedDigestId,
-  getIsMultiProviderConfigurationEnabled,
   InvalidateCacheService,
   ProcessSubscriber,
   StorageHelperService,
   storageService,
   UpdateSubscriber,
+  UpdateSubscriberChannel,
   UpdateTenant,
   GetTenant,
   CreateTenant,
   ProcessTenant,
   ...DAL_MODELS,
+  ActiveJobsMetricService,
+  ExecuteBridgeRequest,
+  GetDecryptedSecretKey,
 ];
 
 @Module({
   imports: [
+    MetricsModule,
+    QueuesModule.forRoot(
+      UNIQUE_WORKER_DEPENDENCIES.length
+        ? [JobTopicNameEnum.ACTIVE_JOBS_METRIC, ...UNIQUE_WORKER_DEPENDENCIES]
+        : undefined
+    ),
     LoggerModule.forRoot(
       createNestLoggingModuleOptions({
         serviceName: packageJson.name,
@@ -134,6 +130,6 @@ const PROVIDERS = [
     ),
   ],
   providers: [...PROVIDERS],
-  exports: [...PROVIDERS, LoggerModule],
+  exports: [...PROVIDERS, LoggerModule, QueuesModule],
 })
 export class SharedModule {}

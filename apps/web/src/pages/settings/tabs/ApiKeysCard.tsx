@@ -1,27 +1,30 @@
 import { ActionIcon, Input as MantineInput } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
-import { useQuery } from '@tanstack/react-query';
 import styled from '@emotion/styled';
 
-import { Input, Tooltip, colors } from '../../../design-system';
-import { Check, Copy } from '../../../design-system/icons';
-import { getApiKeys } from '../../../api/environment';
-import { inputStyles } from '../../../design-system/config/inputs.styles';
-import { useEnvController } from '../../../hooks';
+import {
+  Input,
+  Tooltip,
+  colors,
+  Check,
+  Copy,
+  inputStyles,
+  IconOutlineVisibility,
+  IconOutlineVisibilityOff,
+} from '@novu/design-system';
+import { useState } from 'react';
+import { useAPIKeys, useEnvironment } from '../../../hooks';
 import { Regenerate } from './components/Regenerate';
 import { When } from '../../../components/utils/When';
-import { EyeInvisibleOutlined, EyeOutlined } from '@ant-design/icons';
-import { useState } from 'react';
 
 export const ApiKeysCard = () => {
   const clipboardApiKey = useClipboard({ timeout: 1000 });
   const clipboardEnvironmentIdentifier = useClipboard({ timeout: 1000 });
   const clipboardEnvironmentId = useClipboard({ timeout: 1000 });
-  const { data: apiKeys, refetch: refetchApiKeys } = useQuery<{ key: string }[]>(['getApiKeys'], getApiKeys);
+  const { apiKey } = useAPIKeys();
 
-  const { environment } = useEnvController();
+  const { environment } = useEnvironment();
 
-  const apiKey = apiKeys?.length ? apiKeys[0].key : '';
   const environmentIdentifier = environment?.identifier ? environment.identifier : '';
   const environmentId = environment?._id ? environment._id : '';
 
@@ -43,20 +46,10 @@ export const ApiKeysCard = () => {
               <>
                 <ActionIcon variant="transparent" onClick={() => setHidden(!hidden)}>
                   <When truthy={hidden}>
-                    <EyeOutlined
-                      style={{
-                        color: colors.B60,
-                        fontSize: '16px',
-                      }}
-                    />
+                    <IconOutlineVisibility />
                   </When>
                   <When truthy={!hidden}>
-                    <EyeInvisibleOutlined
-                      style={{
-                        color: colors.B60,
-                        fontSize: '16px',
-                      }}
-                    />
+                    <IconOutlineVisibilityOff />
                   </When>
                 </ActionIcon>
                 <Tooltip label={clipboardApiKey.copied ? 'Copied!' : 'Copy Key'}>
@@ -86,7 +79,7 @@ export const ApiKeysCard = () => {
             data-test-id="api-key-container"
           />
         </MantineInput.Wrapper>
-        <Regenerate fetchApiKeys={refetchApiKeys} />
+        <Regenerate />
       </ParamContainer>
       <ParamContainer>
         <MantineInput.Wrapper

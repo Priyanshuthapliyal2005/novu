@@ -1,34 +1,44 @@
 import { Injectable, Logger } from '@nestjs/common';
-const nr = require('newrelic');
+
 import { ObservabilityBackgroundTransactionEnum } from '@novu/shared';
 import {
-  SubscriberJobBound,
+  getSubscriberProcessWorkerOptions,
   SubscriberProcessWorkerService,
   PinoLogger,
-  SubscriberJobBoundCommand,
   storage,
   Store,
+  WorkerOptions,
+  BullMqService,
+  WorkflowInMemoryProviderService,
+  IProcessSubscriberDataDto,
 } from '@novu/application-generic';
+
+import { SubscriberJobBound } from '../usecases/subscriber-job-bound/subscriber-job-bound.usecase';
+
+const nr = require('newrelic');
 
 const LOG_CONTEXT = 'SubscriberProcessWorker';
 
 @Injectable()
 export class SubscriberProcessWorker extends SubscriberProcessWorkerService {
-  constructor(private subscriberJobBoundUsecase: SubscriberJobBound) {
-    super();
+  constructor(
+    private subscriberJobBoundUsecase: SubscriberJobBound,
+    public workflowInMemoryProviderService: WorkflowInMemoryProviderService
+  ) {
+    super(new BullMqService(workflowInMemoryProviderService));
+
     this.initWorker(this.getWorkerProcessor(), this.getWorkerOpts());
   }
 
   public getWorkerProcessor() {
-    return async ({ data }: { data: SubscriberJobBoundCommand }) => {
-      return await new Promise(async (resolve, reject) => {
-        // eslint-disable-next-line @typescript-eslint/no-this-alias
+    return async ({ data }: { data: IProcessSubscriberDataDto }) => {
+      return await new Promise((resolve, reject) => {
         const _this = this;
 
         nr.startBackgroundTransaction(
           ObservabilityBackgroundTransactionEnum.SUBSCRIBER_PROCESSING_QUEUE,
           'Trigger Engine',
-          function () {
+          function processTask() {
             const transaction = nr.getTransaction();
 
             storage.run(new Store(PinoLogger.root), () => {
@@ -37,6 +47,7 @@ export class SubscriberProcessWorker extends SubscriberProcessWorkerService {
                 .then(resolve)
                 .catch((e) => {
                   Logger.error(e, 'unexpected error', 'SubscriberProcessWorkerService - getWorkerProcessor');
+                  nr.noticeError(e);
                   reject(e);
                 })
 
@@ -50,10 +61,7 @@ export class SubscriberProcessWorker extends SubscriberProcessWorkerService {
     };
   }
 
-  private getWorkerOpts() {
-    return {
-      lockDuration: 90000,
-      concurrency: 200,
-    };
+  private getWorkerOpts(): WorkerOptions {
+    return getSubscriberProcessWorkerOptions();
   }
 }

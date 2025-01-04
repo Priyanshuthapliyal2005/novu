@@ -4,7 +4,7 @@ import axios from 'axios';
 import { UserSession } from '@novu/testing';
 import { ChannelTypeEnum, ChatProviderIdEnum } from '@novu/shared';
 import { IntegrationRepository, SubscriberRepository } from '@novu/dal';
-import { createHash } from '../../shared/helpers/hmac.service';
+import { createHash } from '@novu/application-generic';
 
 const axiosInstance = axios.create();
 
@@ -121,7 +121,7 @@ describe('ChatOauth - /:subscriberId/credentials/:providerId/:environmentId (GET
 
     const hmacHash = createHash(session.apiKey, userSubscriberId);
 
-    const invalidHmac = hmacHash + '007';
+    const invalidHmac = `${hmacHash}007`;
 
     await expectThrow({
       subscriberId: userSubscriberId,

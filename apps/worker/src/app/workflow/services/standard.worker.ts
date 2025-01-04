@@ -1,19 +1,17 @@
-const nr = require('newrelic');
 import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
+
+import { ObservabilityBackgroundTransactionEnum } from '@novu/shared';
 import {
-  ExecutionDetailsSourceEnum,
-  ExecutionDetailsStatusEnum,
-  IJobData,
-  ObservabilityBackgroundTransactionEnum,
-} from '@novu/shared';
-import {
-  INovuWorker,
+  BullMqService,
+  getStandardWorkerOptions,
+  IStandardDataDto,
   Job,
   PinoLogger,
   StandardWorkerService,
   storage,
   Store,
   WorkerOptions,
+  WorkflowInMemoryProviderService,
 } from '@novu/application-generic';
 
 import {
@@ -28,53 +26,60 @@ import {
   HandleLastFailedJob,
 } from '../usecases';
 
+const nr = require('newrelic');
+
 const LOG_CONTEXT = 'StandardWorker';
 
 @Injectable()
-export class StandardWorker extends StandardWorkerService implements INovuWorker {
+export class StandardWorker extends StandardWorkerService {
   constructor(
     private handleLastFailedJob: HandleLastFailedJob,
     private runJob: RunJob,
     @Inject(forwardRef(() => SetJobAsCompleted)) private setJobAsCompleted: SetJobAsCompleted,
     @Inject(forwardRef(() => SetJobAsFailed)) private setJobAsFailed: SetJobAsFailed,
     @Inject(forwardRef(() => WebhookFilterBackoffStrategy))
-    private webhookFilterBackoffStrategy: WebhookFilterBackoffStrategy
+    private webhookFilterBackoffStrategy: WebhookFilterBackoffStrategy,
+    @Inject(forwardRef(() => WorkflowInMemoryProviderService))
+    public workflowInMemoryProviderService: WorkflowInMemoryProviderService
   ) {
-    super();
+    super(new BullMqService(workflowInMemoryProviderService));
 
     this.initWorker(this.getWorkerProcessor(), this.getWorkerOptions());
 
-    this.worker.on('failed', async (job: Job<IJobData, void, string>, error: Error): Promise<void> => {
+    this.worker.on('failed', async (job: Job<IStandardDataDto, void, string>, error: Error): Promise<void> => {
       await this.jobHasFailed(job, error);
     });
   }
 
   private getWorkerOptions(): WorkerOptions {
     return {
-      lockDuration: 90000,
-      concurrency: 200,
+      ...getStandardWorkerOptions(),
       settings: {
         backoffStrategy: this.getBackoffStrategies(),
       },
     };
   }
 
-  private extractMinimalJobData(job: any): {
+  private extractMinimalJobData(data: IStandardDataDto): {
     environmentId: string;
-    organizationId: string;
     jobId: string;
+    organizationId: string;
     userId: string;
   } {
-    const { _environmentId: environmentId, _id: jobId, _organizationId: organizationId, _userId: userId } = job;
+    const { _environmentId: environmentId, _id: jobId, _organizationId: organizationId, _userId: userId } = data;
 
     if (!environmentId || !jobId || !organizationId || !userId) {
-      const message = job.payload.message;
+      const message = data.payload?.message;
+
+      if (!message) {
+        throw new Error(`Job data is missing required fields${JSON.stringify(data)}`);
+      }
 
       return {
         environmentId: message._environmentId,
         jobId: message._jobId,
         organizationId: message._organizationId,
-        userId: job.userId,
+        userId,
       };
     }
 
@@ -87,19 +92,18 @@ export class StandardWorker extends StandardWorkerService implements INovuWorker
   }
 
   private getWorkerProcessor() {
-    return async ({ data }: { data: IJobData | any }) => {
+    return async ({ data }: { data: IStandardDataDto }) => {
       const minimalJobData = this.extractMinimalJobData(data);
 
       Logger.verbose(`Job ${minimalJobData.jobId} is being processed in the new instance standard worker`, LOG_CONTEXT);
 
-      return await new Promise(async (resolve, reject) => {
-        // eslint-disable-next-line @typescript-eslint/no-this-alias
+      return await new Promise((resolve, reject) => {
         const _this = this;
 
         nr.startBackgroundTransaction(
           ObservabilityBackgroundTransactionEnum.JOB_PROCESSING_QUEUE,
           'Trigger Engine',
-          function () {
+          function processTask() {
             const transaction = nr.getTransaction();
 
             storage.run(new Store(PinoLogger.root), () => {
@@ -125,14 +129,14 @@ export class StandardWorker extends StandardWorkerService implements INovuWorker
     };
   }
 
-  private async jobHasCompleted(job: Job<IJobData, void, string>): Promise<void> {
+  private async jobHasCompleted(job: Job<IStandardDataDto, void, string>): Promise<void> {
     let jobId;
 
     try {
       const minimalData = this.extractMinimalJobData(job.data);
       jobId = minimalData.jobId;
-      const environmentId = minimalData.environmentId;
-      const userId = minimalData.userId;
+      const { environmentId } = minimalData;
+      const { userId } = minimalData;
 
       await this.setJobAsCompleted.execute(
         SetJobAsCommand.create({
@@ -146,8 +150,10 @@ export class StandardWorker extends StandardWorkerService implements INovuWorker
     }
   }
 
-  private async jobHasFailed(job: Job<IJobData, void, string>, error: Error): Promise<void> {
+  private async jobHasFailed(job: Job<IStandardDataDto, void, string>, error: Error): Promise<void> {
     let jobId;
+
+    nr.noticeError(error);
 
     try {
       const minimalData = this.extractMinimalJobData(job.data);

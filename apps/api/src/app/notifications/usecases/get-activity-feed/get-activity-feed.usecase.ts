@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { SubscriberRepository, NotificationRepository } from '@novu/dal';
+import { Instrument } from '@novu/application-generic';
 import { ActivitiesResponseDto } from '../../dtos/activities-response.dto';
 import { GetActivityFeedCommand } from './get-activity-feed.command';
-import { Instrument } from '@novu/application-generic';
 
 @Injectable()
 export class GetActivityFeed {
@@ -57,7 +57,14 @@ export class GetActivityFeed {
   private async getFeedNotifications(command: GetActivityFeedCommand, subscriberIds: string[], LIMIT: number) {
     const { data: notifications } = await this.notificationRepository.getFeed(
       command.environmentId,
-      { channels: command.channels, templates: command.templates, subscriberIds, transactionId: command.transactionId },
+      {
+        channels: command.channels,
+        templates: command.templates,
+        subscriberIds,
+        transactionId: command.transactionId,
+        after: command.after,
+        before: command.before,
+      },
       command.page * LIMIT,
       LIMIT
     );

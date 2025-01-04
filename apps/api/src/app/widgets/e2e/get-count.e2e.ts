@@ -6,9 +6,8 @@ import { ChannelTypeEnum, InAppProviderIdEnum } from '@novu/shared';
 import {
   buildFeedKey,
   buildMessageCountKey,
+  CacheInMemoryProviderService,
   CacheService,
-  InMemoryProviderEnum,
-  InMemoryProviderService,
   InvalidateCacheService,
 } from '@novu/application-generic';
 
@@ -23,11 +22,11 @@ describe('Count - GET /widget/notifications/count', function () {
   } | null = null;
 
   let invalidateCache: InvalidateCacheService;
-  let inMemoryProviderService: InMemoryProviderService;
+  let cacheInMemoryProviderService: CacheInMemoryProviderService;
 
   before(async () => {
-    inMemoryProviderService = new InMemoryProviderService(InMemoryProviderEnum.REDIS);
-    const cacheService = new CacheService(inMemoryProviderService);
+    cacheInMemoryProviderService = new CacheInMemoryProviderService();
+    const cacheService = new CacheService(cacheInMemoryProviderService);
     await cacheService.initialize();
     invalidateCache = new InvalidateCacheService(cacheService);
   });
@@ -71,7 +70,6 @@ describe('Count - GET /widget/notifications/count', function () {
       String(subscriberProfile?._id),
       ChannelTypeEnum.IN_APP
     );
-    const messageId = messages[0]._id;
     const seenCount = (await getFeedCount()).data.count;
     expect(seenCount).to.equal(3);
   });
@@ -179,7 +177,7 @@ describe('Count - GET /widget/notifications/count', function () {
   });
 
   it('should return unseen count by default limit 100', async function () {
-    for (let i = 0; i < 102; i++) {
+    for (let i = 0; i < 102; i += 1) {
       await messageRepository.create({
         _notificationId: MessageRepository.createObjectId(),
         _environmentId: session.environment._id,
@@ -256,14 +254,14 @@ describe('Count - GET /widget/notifications/count', function () {
 
     const messages = await messageRepository.findBySubscriberChannel(
       session.environment._id,
-      subscriberProfile!._id,
+      String(subscriberProfile?._id),
       ChannelTypeEnum.IN_APP
     );
     const messageId = messages[0]._id;
     expect(messages[0].seen).to.equal(false);
 
     await axios.post(
-      `http://localhost:${process.env.PORT}/v1/widgets/messages/markAs`,
+      `http://127.0.0.1:${process.env.PORT}/v1/widgets/messages/markAs`,
       { messageId, mark: { seen: true } },
       {
         headers: {
@@ -294,7 +292,7 @@ describe('Count - GET /widget/notifications/count', function () {
     expect(messages[0].read).to.equal(false);
 
     await axios.post(
-      `http://localhost:${process.env.PORT}/v1/widgets/messages/markAs`,
+      `http://127.0.0.1:${process.env.PORT}/v1/widgets/messages/markAs`,
       { messageId, mark: { seen: true, read: true } },
       {
         headers: {
@@ -319,7 +317,7 @@ describe('Count - GET /widget/notifications/count', function () {
 
     const messages = await messageRepository.findBySubscriberChannel(
       session.environment._id,
-      subscriberProfile!._id,
+      String(subscriberProfile?._id),
       ChannelTypeEnum.IN_APP
     );
     const messageId = messages[0]._id;
@@ -329,20 +327,20 @@ describe('Count - GET /widget/notifications/count', function () {
 
     await invalidateCache.invalidateQuery({
       key: buildFeedKey().invalidate({
-        subscriberId: subscriberId,
+        subscriberId,
         _environmentId: session.environment._id,
       }),
     });
 
     await invalidateCache.invalidateQuery({
       key: buildMessageCountKey().invalidate({
-        subscriberId: subscriberId,
+        subscriberId,
         _environmentId: session.environment._id,
       }),
     });
 
     await axios.post(
-      `http://localhost:${process.env.PORT}/v1/widgets/messages/markAs`,
+      `http://127.0.0.1:${process.env.PORT}/v1/widgets/messages/markAs`,
       { messageId, mark: { seen: true } },
       {
         headers: {
@@ -356,7 +354,7 @@ describe('Count - GET /widget/notifications/count', function () {
   });
 
   async function getFeedCount(query = {}) {
-    const response = await axios.get(`http://localhost:${process.env.PORT}/v1/widgets/notifications/count`, {
+    const response = await axios.get(`http://127.0.0.1:${process.env.PORT}/v1/widgets/notifications/count`, {
       params: {
         ...query,
       },
@@ -372,14 +370,14 @@ describe('Count - GET /widget/notifications/count', function () {
 async function invalidateSeenFeed(invalidateCache: InvalidateCacheService, subscriberId: string, session) {
   await invalidateCache.invalidateQuery({
     key: buildFeedKey().invalidate({
-      subscriberId: subscriberId,
+      subscriberId,
       _environmentId: session.environment._id,
     }),
   });
 
   await invalidateCache.invalidateQuery({
     key: buildMessageCountKey().invalidate({
-      subscriberId: subscriberId,
+      subscriberId,
       _environmentId: session.environment._id,
     }),
   });

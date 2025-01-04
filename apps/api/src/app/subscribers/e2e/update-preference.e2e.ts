@@ -9,7 +9,13 @@ import {
   StepTypeEnum,
 } from '@novu/shared';
 
-import { getNotificationTemplate, updateNotificationTemplate, getPreference, updatePreference } from './helpers';
+import {
+  getNotificationTemplate,
+  updateNotificationTemplate,
+  getPreference,
+  updatePreference,
+  updatePreferences,
+} from './helpers';
 
 describe('Update Subscribers preferences - /subscribers/:subscriberId/preferences/:templateId (PATCH)', function () {
   let session: UserSession;
@@ -31,7 +37,7 @@ describe('Update Subscribers preferences - /subscribers/:subscriberId/preference
 
     try {
       const response = await updatePreference(updateDataEmailFalse as any, session, template._id);
-      expect(response).to.not.be;
+      expect(response).to.not.be.ok;
     } catch (error) {
       expect(error.toJSON()).to.have.include({
         status: 400,
@@ -51,7 +57,7 @@ describe('Update Subscribers preferences - /subscribers/:subscriberId/preference
 
     try {
       const response = await updatePreference(updateDataEmailFalse as any, session, template._id);
-      expect(response).to.not.be;
+      expect(response).to.not.be.ok;
     } catch (error) {
       expect(error.toJSON()).to.have.include({
         status: 400,
@@ -71,15 +77,51 @@ describe('Update Subscribers preferences - /subscribers/:subscriberId/preference
 
     try {
       const response = await updatePreference(updateDataEmailFalse as any, session, '63cc6e0b561e0a609f223e27');
-      expect(response).to.not.be;
+      expect(response).to.not.be.ok;
     } catch (error) {
       const { response } = error;
       expect(response.status).to.eql(404);
       expect(response.data).to.have.include({
         statusCode: 404,
-        message: 'Template with id 63cc6e0b561e0a609f223e27 is not found',
+        message: 'Workflow with id: 63cc6e0b561e0a609f223e27 is not found',
         error: 'Not Found',
       });
+    }
+  });
+
+  it('should fail on invalid "enabled" param (string)', async function () {
+    const updatePreferenceDataEmailFalse = {
+      channel: {
+        type: ChannelTypeEnum.EMAIL,
+        enabled: '',
+      },
+    };
+
+    try {
+      const response = await updatePreference(updatePreferenceDataEmailFalse as any, session, template._id);
+      expect(response).to.not.be.ok;
+    } catch (error) {
+      const { response } = error;
+      expect(response.status).to.eql(400);
+      expect(response.data.message[0]).to.be.equal('channel.enabled must be a boolean value');
+    }
+
+    const updatePreferencesDataEmailFalse = {
+      preferences: [
+        {
+          type: ChannelTypeEnum.EMAIL,
+          enabled: '',
+        },
+      ],
+    };
+
+    try {
+      const response = await updatePreferences(updatePreferencesDataEmailFalse as any, session);
+      expect(response).to.not.be.ok;
+    } catch (error) {
+      const { response } = error;
+      expect(response.status).to.eql(400);
+      expect(response.data.message[0]).to.be.equal('preferences.0.enabled must be a boolean value');
     }
   });
 
@@ -89,6 +131,9 @@ describe('Update Subscribers preferences - /subscribers/:subscriberId/preference
     expect(initialPreferences.preference.channels).to.eql({
       [ChannelTypeEnum.EMAIL]: true,
       [ChannelTypeEnum.IN_APP]: true,
+      [ChannelTypeEnum.PUSH]: true,
+      [ChannelTypeEnum.CHAT]: true,
+      [ChannelTypeEnum.SMS]: true,
     });
 
     const emptyPreferenceData = {
@@ -103,15 +148,22 @@ describe('Update Subscribers preferences - /subscribers/:subscriberId/preference
     expect(preferences.preference.channels).to.eql({
       [ChannelTypeEnum.EMAIL]: true,
       [ChannelTypeEnum.IN_APP]: true,
+      [ChannelTypeEnum.PUSH]: true,
+      [ChannelTypeEnum.CHAT]: true,
+      [ChannelTypeEnum.SMS]: true,
     });
   });
 
-  it('should update user preference and disable the flag for the future general notification template preference', async function () {
+  // `enabled` flag is not used anymore. The presence of a preference object means that the subscriber has enabled notifications.
+  it.skip('should update user preference and disable the flag for the future general notification template preference', async function () {
     const initialPreferences = (await getPreference(session)).data.data[0];
     expect(initialPreferences.preference.enabled).to.eql(true);
     expect(initialPreferences.preference.channels).to.eql({
       [ChannelTypeEnum.EMAIL]: true,
       [ChannelTypeEnum.IN_APP]: true,
+      [ChannelTypeEnum.PUSH]: true,
+      [ChannelTypeEnum.CHAT]: true,
+      [ChannelTypeEnum.SMS]: true,
     });
 
     const disablePreferenceData = {
@@ -125,6 +177,9 @@ describe('Update Subscribers preferences - /subscribers/:subscriberId/preference
     expect(midwayPreferences.preference.channels).to.eql({
       [ChannelTypeEnum.EMAIL]: true,
       [ChannelTypeEnum.IN_APP]: true,
+      [ChannelTypeEnum.PUSH]: true,
+      [ChannelTypeEnum.CHAT]: true,
+      [ChannelTypeEnum.SMS]: true,
     });
 
     const updateEmailPreferenceData = {
@@ -141,15 +196,22 @@ describe('Update Subscribers preferences - /subscribers/:subscriberId/preference
     expect(finalPreferences.preference.channels).to.eql({
       [ChannelTypeEnum.EMAIL]: false,
       [ChannelTypeEnum.IN_APP]: true,
+      [ChannelTypeEnum.PUSH]: true,
+      [ChannelTypeEnum.CHAT]: true,
+      [ChannelTypeEnum.SMS]: true,
     });
   });
 
-  it('should update user preference and enable the flag for the future general notification template preference', async function () {
+  // `enabled` flag is not used anymore. The presence of a preference object means that the subscriber has enabled notifications.
+  it.skip('should update user preference and enable the flag for the future general notification template preference', async function () {
     const initialPreferences = (await getPreference(session)).data.data[0];
     expect(initialPreferences.preference.enabled).to.eql(true);
     expect(initialPreferences.preference.channels).to.eql({
       [ChannelTypeEnum.EMAIL]: true,
       [ChannelTypeEnum.IN_APP]: true,
+      [ChannelTypeEnum.PUSH]: true,
+      [ChannelTypeEnum.CHAT]: true,
+      [ChannelTypeEnum.SMS]: true,
     });
 
     const disablePreferenceData = {
@@ -163,6 +225,9 @@ describe('Update Subscribers preferences - /subscribers/:subscriberId/preference
     expect(midwayPreferences.preference.channels).to.eql({
       [ChannelTypeEnum.EMAIL]: true,
       [ChannelTypeEnum.IN_APP]: true,
+      [ChannelTypeEnum.PUSH]: true,
+      [ChannelTypeEnum.CHAT]: true,
+      [ChannelTypeEnum.SMS]: true,
     });
 
     const enablePreferenceData = {
@@ -176,6 +241,9 @@ describe('Update Subscribers preferences - /subscribers/:subscriberId/preference
     expect(finalPreferences.preference.channels).to.eql({
       [ChannelTypeEnum.EMAIL]: true,
       [ChannelTypeEnum.IN_APP]: true,
+      [ChannelTypeEnum.PUSH]: true,
+      [ChannelTypeEnum.CHAT]: true,
+      [ChannelTypeEnum.SMS]: true,
     });
   });
 
@@ -185,6 +253,9 @@ describe('Update Subscribers preferences - /subscribers/:subscriberId/preference
     expect(initialPreferences.preference.channels).to.eql({
       [ChannelTypeEnum.EMAIL]: true,
       [ChannelTypeEnum.IN_APP]: true,
+      [ChannelTypeEnum.PUSH]: true,
+      [ChannelTypeEnum.CHAT]: true,
+      [ChannelTypeEnum.SMS]: true,
     });
 
     const disableEmailPreferenceData = {
@@ -201,6 +272,9 @@ describe('Update Subscribers preferences - /subscribers/:subscriberId/preference
     expect(updatedPreferences.preference.channels).to.eql({
       [ChannelTypeEnum.EMAIL]: false,
       [ChannelTypeEnum.IN_APP]: true,
+      [ChannelTypeEnum.PUSH]: true,
+      [ChannelTypeEnum.CHAT]: true,
+      [ChannelTypeEnum.SMS]: true,
     });
 
     const enableEmailPreferenceData = {
@@ -217,6 +291,9 @@ describe('Update Subscribers preferences - /subscribers/:subscriberId/preference
     expect(finalPreferences.preference.channels).to.eql({
       [ChannelTypeEnum.EMAIL]: true,
       [ChannelTypeEnum.IN_APP]: true,
+      [ChannelTypeEnum.PUSH]: true,
+      [ChannelTypeEnum.CHAT]: true,
+      [ChannelTypeEnum.SMS]: true,
     });
   });
 
@@ -226,6 +303,9 @@ describe('Update Subscribers preferences - /subscribers/:subscriberId/preference
     expect(initialPreferences.preference.channels).to.eql({
       [ChannelTypeEnum.EMAIL]: true,
       [ChannelTypeEnum.IN_APP]: true,
+      [ChannelTypeEnum.PUSH]: true,
+      [ChannelTypeEnum.CHAT]: true,
+      [ChannelTypeEnum.SMS]: true,
     });
 
     const updateSmsPreferenceData = {
@@ -242,6 +322,9 @@ describe('Update Subscribers preferences - /subscribers/:subscriberId/preference
     expect(finalPreferences.preference.channels).to.eql({
       [ChannelTypeEnum.EMAIL]: true,
       [ChannelTypeEnum.IN_APP]: true,
+      [ChannelTypeEnum.PUSH]: true,
+      [ChannelTypeEnum.CHAT]: true,
+      [ChannelTypeEnum.SMS]: false,
     });
   });
 
@@ -273,6 +356,8 @@ describe('Update Subscribers preferences - /subscribers/:subscriberId/preference
       [ChannelTypeEnum.EMAIL]: true,
       [ChannelTypeEnum.IN_APP]: true,
       [ChannelTypeEnum.SMS]: true,
+      [ChannelTypeEnum.PUSH]: true,
+      [ChannelTypeEnum.CHAT]: true,
     });
 
     const updateSmsPreferenceData = {
@@ -290,6 +375,8 @@ describe('Update Subscribers preferences - /subscribers/:subscriberId/preference
       [ChannelTypeEnum.EMAIL]: true,
       [ChannelTypeEnum.IN_APP]: true,
       [ChannelTypeEnum.SMS]: false,
+      [ChannelTypeEnum.PUSH]: true,
+      [ChannelTypeEnum.CHAT]: true,
     });
   });
 
@@ -326,6 +413,9 @@ describe('Update Subscribers preferences - /subscribers/:subscriberId/preference
     expect(initialPreferences.preference.channels).to.eql({
       [ChannelTypeEnum.EMAIL]: true,
       [ChannelTypeEnum.IN_APP]: true,
+      [ChannelTypeEnum.PUSH]: true,
+      [ChannelTypeEnum.CHAT]: true,
+      [ChannelTypeEnum.SMS]: true,
     });
 
     const updateSmsPreferenceData = {
@@ -342,6 +432,9 @@ describe('Update Subscribers preferences - /subscribers/:subscriberId/preference
     expect(finalPreferences.preference.channels).to.eql({
       [ChannelTypeEnum.EMAIL]: false,
       [ChannelTypeEnum.IN_APP]: true,
+      [ChannelTypeEnum.PUSH]: true,
+      [ChannelTypeEnum.CHAT]: true,
+      [ChannelTypeEnum.SMS]: true,
     });
   });
 });

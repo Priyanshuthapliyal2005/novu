@@ -1,11 +1,11 @@
 import { expect } from 'chai';
 import axios from 'axios';
-import * as sinon from 'sinon';
+import sinon from 'sinon';
 
 import { UserSession } from '@novu/testing';
 import { ChannelTypeEnum, ChatProviderIdEnum } from '@novu/shared';
 import { IntegrationRepository, SubscriberRepository } from '@novu/dal';
-import { createHash } from '../../shared/helpers/hmac.service';
+import { createHash } from '@novu/application-generic';
 
 const axiosInstance = axios.create();
 
@@ -161,7 +161,7 @@ describe('ChatOauthCallback - /:subscriberId/credentials/:providerId/:environmen
 
     const hmacHash = createHash(session.apiKey, userSubscriberId);
 
-    const invalidHmac = hmacHash + '007';
+    const invalidHmac = `${hmacHash}007`;
 
     await expectThrow({
       subscriberId: userSubscriberId,
@@ -197,7 +197,7 @@ describe('ChatOauthCallback - /:subscriberId/credentials/:providerId/:environmen
     environmentId?: string;
     hashHmac?: string;
   }) {
-    const expectedError = 'Exception should have been thrown' + ` expect error: ${error}`;
+    const expectedError = `Exception should have been thrown expect error: ${error}`;
     try {
       await chatOauthCallback(session.serverUrl, subscriberId, environmentId, ChatProviderIdEnum.Slack, hashHmac);
       throw new Error(expectedError);

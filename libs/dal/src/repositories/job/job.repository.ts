@@ -1,6 +1,7 @@
 import { ProjectionType } from 'mongoose';
 import { DigestTypeEnum, IDigestRegularMetadata, StepTypeEnum, DigestCreationResultEnum } from '@novu/shared';
 
+import { sub, isBefore } from 'date-fns';
 import { BaseRepository } from '../base-repository';
 import { JobEntity, JobDBModel, JobStatusEnum } from './job.entity';
 import { Job } from './job.schema';
@@ -10,7 +11,6 @@ import { NotificationEntity } from '../notification';
 import { EnvironmentEntity } from '../environment';
 import type { EnforceEnvOrOrgIds, IUpdateResult } from '../../types';
 import { DalException } from '../../shared';
-import { sub, isBefore } from 'date-fns';
 
 type JobEntityPopulated = JobEntity & {
   template: NotificationTemplateEntity;
@@ -22,6 +22,7 @@ type JobEntityPopulated = JobEntity & {
 export interface IDelayOrDigestJobResult {
   digestResult: DigestCreationResultEnum;
   activeDigestId?: string;
+  activeNotificationId?: string;
 }
 
 export class JobRepository extends BaseRepository<JobDBModel, JobEntity, EnforceEnvOrOrgIds> {
@@ -31,8 +32,9 @@ export class JobRepository extends BaseRepository<JobDBModel, JobEntity, Enforce
 
   public async storeJobs(jobs: Omit<JobEntity, '_id' | 'createdAt' | 'updatedAt'>[]): Promise<JobEntity[]> {
     const stored: JobEntity[] = [];
-    for (let index = 0; index < jobs.length; index++) {
+    for (let index = 0; index < jobs.length; index += 1) {
       if (index > 0) {
+        // eslint-disable-next-line no-param-reassign
         jobs[index]._parentId = stored[index - 1]._id;
       }
 
@@ -183,7 +185,11 @@ export class JobRepository extends BaseRepository<JobDBModel, JobEntity, Enforce
     digestValue?: string | number,
     digestMeta?: IDigestRegularMetadata
   ): Promise<IDelayOrDigestJobResult> {
-    const isBackoff = job.digest?.type === DigestTypeEnum.BACKOFF || (job.digest as IDigestRegularMetadata)?.backoff;
+    const isBackoff =
+      job.digest?.type === DigestTypeEnum.BACKOFF ||
+      (job.digest as IDigestRegularMetadata)?.backoff ||
+      (digestMeta?.backoff && digestMeta?.backoff);
+
     if (isBackoff) {
       const trigger = await this.getTrigger(job, digestMeta, digestKey, digestValue);
       if (!trigger) {
@@ -215,7 +221,7 @@ export class JobRepository extends BaseRepository<JobDBModel, JobEntity, Enforce
         _subscriberId: this.convertStringToObjectId(job._subscriberId),
         ...(digestKey && { [`payload.${digestKey}`]: digestValue }),
       },
-      '_id'
+      '_id _notificationId'
     );
 
     if (!delayedDigestJob) {
@@ -241,6 +247,7 @@ export class JobRepository extends BaseRepository<JobDBModel, JobEntity, Enforce
 
     return {
       activeDigestId: delayedDigestJob._id,
+      activeNotificationId: delayedDigestJob._notificationId?.toString(),
       digestResult: DigestCreationResultEnum.MERGED,
     };
   }

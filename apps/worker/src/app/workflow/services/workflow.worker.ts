@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-const nr = require('newrelic');
 import {
-  INovuWorker,
+  getWorkflowWorkerOptions,
   PinoLogger,
   storage,
   Store,
@@ -10,30 +9,34 @@ import {
   WorkflowWorkerService,
   WorkerOptions,
   WorkerProcessor,
+  BullMqService,
+  WorkflowInMemoryProviderService,
+  IWorkflowDataDto,
 } from '@novu/application-generic';
 import { ObservabilityBackgroundTransactionEnum } from '@novu/shared';
+
+const nr = require('newrelic');
 
 const LOG_CONTEXT = 'WorkflowWorker';
 
 @Injectable()
-export class WorkflowWorker extends WorkflowWorkerService implements INovuWorker {
-  constructor(private triggerEventUsecase: TriggerEvent) {
-    super();
+export class WorkflowWorker extends WorkflowWorkerService {
+  constructor(
+    private triggerEventUsecase: TriggerEvent,
+    public workflowInMemoryProviderService: WorkflowInMemoryProviderService
+  ) {
+    super(new BullMqService(workflowInMemoryProviderService));
 
     this.initWorker(this.getWorkerProcessor(), this.getWorkerOptions());
   }
 
   private getWorkerOptions(): WorkerOptions {
-    return {
-      lockDuration: 90000,
-      concurrency: 200,
-    };
+    return getWorkflowWorkerOptions();
   }
 
   private getWorkerProcessor(): WorkerProcessor {
-    return async ({ data }: { data: TriggerEventCommand }) => {
-      return await new Promise(async (resolve, reject) => {
-        // eslint-disable-next-line @typescript-eslint/no-this-alias
+    return async ({ data }: { data: IWorkflowDataDto }) => {
+      return await new Promise((resolve, reject) => {
         const _this = this;
 
         Logger.verbose(`Job ${data.identifier} is being processed in the new instance workflow worker`, LOG_CONTEXT);
@@ -41,14 +44,17 @@ export class WorkflowWorker extends WorkflowWorkerService implements INovuWorker
         nr.startBackgroundTransaction(
           ObservabilityBackgroundTransactionEnum.TRIGGER_HANDLER_QUEUE,
           'Trigger Engine',
-          function () {
+          function processTask() {
             const transaction = nr.getTransaction();
 
             storage.run(new Store(PinoLogger.root), () => {
               _this.triggerEventUsecase
                 .execute(data)
                 .then(resolve)
-                .catch(reject)
+                .catch((e) => {
+                  nr.noticeError(e);
+                  reject(e);
+                })
                 .finally(() => {
                   transaction.end();
                 });

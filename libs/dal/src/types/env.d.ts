@@ -6,5 +6,6 @@ declare namespace NodeJS {
     NODE_ENV: 'test' | 'production' | 'dev';
     MONGO_MIN_POOL_SIZE: number;
     MONGO_MAX_POOL_SIZE: number;
+    NOTIFICATION_RETENTION_DAYS?: number;
   }
 }
